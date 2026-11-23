@@ -1,0 +1,35 @@
+# Beispiel: Haven (ich) gegen Necropolis. Farben: b=blau, g=gruen, w=weiss (frei waehlbar, 1 Zeichen).
+[me]
+hero = Godric
+faction = haven
+hp = 80
+max_hp = 100
+mp = 30
+level = 10
+artifacts =
+
+[enemy]
+hero = Fiona
+faction = necropolis
+hp = 60
+max_hp = 100
+level = 10
+
+[state]
+moves = 3
+
+[board]
+# Gegner: oberste Zeile = hinterste Reihe, unterste Zeile = Front (Mittellinie)
+.      .      .          .      .      .      .      .
+.      .      skg        .      .      .      .      .
+zob    .      skg        .      egw    .      .      .
+zob    egw    F:skb:1:7  .      egw    skb    .      .
+W6     egw    F:skb:1:7  .      skw    skb    zob    .
+W6     zow    F:skb:1:7  W6     zow    egb    zob    skg
+--------------------------------------------------------
+swb    arg    swb    spw    knb    arw    spg    swb
+swb    arg    arw    spw    knb    arw    spg    swg
+arw    swg    swb    .      swb    spb    arw    swg
+.      arg    arb    .      arw    spb    .      .
+.      .      .      .      .      .      .      .
+.      .      .      .      .      .      .      .
