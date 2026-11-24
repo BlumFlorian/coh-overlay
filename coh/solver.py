@@ -377,11 +377,16 @@ def _actions(state: State) -> list[tuple]:
     # sonst explodiert die Suche.
     # Ausserdem jederzeit: Loeschen, das einen idle Champion/Elite der Aktivierung naeher bringt
     # (davor loeschen, damit er nach vorn rutscht, oder Fremde dahinter entfernen).
+    # Eigene Mauern nie "nur zur Vorbereitung" abreissen (Nutzer, 2026-11-24, Analyse 20261124_150526):
+    # Ihr Wert gegen spaetere, noch unbekannte Gegnerangriffe fehlt in der Simulation, der Gewinn
+    # (eine Reihe Platz) kam nur aus der ungenauen Folgezug-Suche. Mit Chain oder fuer die
+    # Aktivierung eines Champions/einer Elite bleibt es erlaubt.
     last = state.moves_left == 1
+    walls = {(p.col, p.row) for p in state.me.pieces if p.kind == "wall"} if last else ()
     before = None
     for a in legal_deletes(state):
         s2, extra = apply_action(state, a)
-        if extra > 0 or last:
+        if extra > 0 or (last and (a[1], a[2]) not in walls):
             acts.append(a)
             continue
         if before is None:
@@ -493,7 +498,8 @@ def _next_turn(state: State, w: Weights) -> tuple[State | None, float]:
 # jedem Hilfsprozess erneut laufen. COH_WORKERS=1 schaltet das Parallelisieren auch dort ab.
 
 # Verstaerkung im Folgezug der Vorausschau (Anzahl Wuerfe; 0 = aus)
-LOOKAHEAD_REINFORCE = 0
+LOOKAHEAD_REINFORCE = int(os.environ.get("COH_LA_REINFORCE", "0"))
+LOOKAHEAD_REINFORCE_FIRST = os.environ.get("COH_LA_REINFORCE_FIRST", "1") == "1"
 
 # Auch die einzelnen Bewertungen der Hauptsuche verteilen (viele kleine Aufgaben). Lohnt unter
 # CPython; unter PyPy ist eine Bewertung so schnell, dass das Uebertragen mehr kostet.
@@ -572,7 +578,8 @@ def _lookahead_sample(args) -> tuple[float, "State | None", list | None]:
     if s2 is None:
         return value, None, None
     sub = solve(s2, w, beam=20, max_depth=6, node_budget=budget, top=1,
-                horizon=max(2, horizon - 1), reinforce_samples=LOOKAHEAD_REINFORCE, lookahead=0, reorder=0)[0]
+                horizon=max(2, horizon - 1), reinforce_samples=LOOKAHEAD_REINFORCE, lookahead=0, reorder=0,
+                reinforce_first=LOOKAHEAD_REINFORCE_FIRST)[0]
     return value + w.discount * sub.score, s2, sub.actions
 
 
