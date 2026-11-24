@@ -36,6 +36,14 @@ py -3.12 -m venv .venv
 
 Danach per Doppelklick starten: **`Overlay starten.bat`** (Zugvorschläge) bzw. **`Replay auswerten.bat`** (Vorhersage gegen Wirklichkeit).
 
+**Empfohlen: `Client starten.bat`** – Programmfenster (für den zweiten Monitor), das das Overlay gleich mitstartet:
+- **Brett-Ansicht** der neuesten Analyse neben dem Screenshot: Darauf beruht der Vorschlag. Kopfwerte, Plan und Unsicherheiten rechts, Verlauf links, Log unten.
+- **Farben:** Die Erkennung benennt Farben mit Buchstaben (je Analyse beliebig). Einmal in der Legende benennen (z. B. A = Gold), danach ordnet der Client sie selbst zu (gelernte Vorlage) – Korrekturen verfeinern sie.
+- **„✎ Brett falsch melden“:** Felder anklicken und richtigstellen, Kopfwerte ändern, Speichern. **„👎 Vorschlag schlecht“:** besseren Zug und Notiz eingeben.
+- Meldungen landen in `dataset/corrections/<Zeit>/` (Screenshot, `erkannt.json`, `korrigiert.json` bzw. `zug.json`, `notiz.txt`).
+- **„📊 Training“:** alle Korrekturen gegen die aktuelle Erkennung – Trefferquote je Merkmal und Liste der Abweichungen. **„⚙ Einstellungen“:** Zauber, Rechenbudget, Vorausschau, Halte-Dauer.
+- Anforderungen und Datenformat: `docs/CLIENT.md`. Nicht zusätzlich `Overlay starten.bat` öffnen (sonst laufen zwei Overlays).
+
 ## 1. Daten sammeln (L1-Modus)
 
 ```powershell

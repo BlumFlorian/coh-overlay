@@ -438,6 +438,8 @@ def compute(frames, args):
     for u in (unsure + uncertainties(state, ui, STOCK))[:4]:
         lines.append("Unsicher: " + u)
     LEARNER.remember(state, plans[0].state, meta)
+    meta["ui"], meta["plan"] = ui, plans[0]  # fuer die Analyse-Datei des Clients (save_analysis)
+    meta["stock_text"] = (STOCK.describe("me"), STOCK.describe("enemy"))
     LEARNER.lib.save()
     known = sum(1 for p in state.me.pieces if p.kind == "form" and not p.color.startswith("?"))
     spell = f"Zauber: ich {'BEREIT (Y)' if ui.my_spell_ready else f'{round((ui.my_mp or 0) * 100)} %'}"
@@ -490,6 +492,14 @@ def save_analysis(img, state, meta, lines):
     pil.save(OUT / f"{stem}.png")
     draw_debug(pil, state, meta).save(OUT / f"{stem}_debug.png")
     (OUT / f"{stem}.txt").write_text("\n".join(lines), encoding="utf-8")
+    # Erkanntes Brett + Plan als JSON fuer den Client (Anzeige, Korrekturen, Training)
+    try:
+        from coh.boardio import analysis_record, write_analysis
+        write_analysis(stem, analysis_record(stem, state, meta.get("ui"), meta, lines, meta.get("plan"),
+                                             meta.get("stock_text")))
+    except Exception:  # Anzeige im Client ist optional, das Overlay laeuft weiter
+        traceback.print_exc()
+    print(f"[{datetime.now():%H:%M:%S}] Analyse gespeichert: {stem}", flush=True)
 
 
 def image_test(ov: Overlay, args):

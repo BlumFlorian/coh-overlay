@@ -38,6 +38,16 @@ Then start by double-clicking **`Overlay starten.bat`** (move suggestions) or **
 
 Run the game **borderless** on your main monitor.
 
+## 0. Client window (recommended)
+
+Double-click **`Client starten.bat`**: a window for your second monitor that also starts the overlay.
+It shows the recognized board next to the screenshot (what the suggestion is based on), head values,
+plan, history and log. Name the colors once in the legend (letters are arbitrary per analysis); the
+client then assigns them itself. **"✎ Brett falsch melden"** corrects cells and values,
+**"👎 Vorschlag schlecht"** records a better move. Reports go to `dataset/corrections/<time>/` as JSON
+for training; **"📊 Training"** evaluates the current recognition against all corrections.
+Requirements and data format: `docs/CLIENT.md` (German).
+
 ## 1. Overlay (live suggestions)
 
 ```powershell
