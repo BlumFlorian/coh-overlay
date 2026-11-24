@@ -6,7 +6,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 
-from .model import COLS, RULES, ROWS, State, tier
+from .model import COLS, RULES, ROWS, TIER, State, tier
 from .rules import apply_action, end_turn_mp, legal_deletes, legal_moves, settle, start_turn
 
 WIN = 1_000_000.0
@@ -294,15 +294,26 @@ def evaluate(state: State, w: Weights, horizon: int = 3) -> tuple[float, dict]:
 IDLE_VALUE = {"core": 2, "elite": 6, "champion": 20}
 
 
-def _ht_count(side) -> Counter:
+def _ht_count(side) -> dict:
     """Elite/Champions auf dem Feld (idle, ladend oder als unbewegliche Blocker erkannt)."""
-    c = Counter()
+    # Heisspfad (4x je simulierter Runde): einfaches dict statt Counter, Ergebnis gleich indizierbar.
+    elite = champion = 0
     for p in side.pieces:
-        if p.kind in ("unit", "form") and p.unit and p.tier in ("elite", "champion"):
-            c[p.tier] += 1
-        elif p.kind == "block" and p.h == 2 and not p.merged:
-            c["champion" if p.w == 2 else "elite"] += 1
-    return c
+        kind = p.kind
+        if kind == "unit" or kind == "form":
+            u = p.unit
+            if u:
+                t = TIER[u]
+                if t == "elite":
+                    elite += 1
+                elif t == "champion":
+                    champion += 1
+        elif kind == "block" and p.h == 2 and not p.merged:
+            if p.w == 2:
+                champion += 1
+            else:
+                elite += 1
+    return {"elite": elite, "champion": champion}
 
 
 def _launched_ht(rep) -> Counter:
@@ -334,23 +345,27 @@ def _ht_settle(s: State, me_before: Counter, en_before: Counter, me_launched: Co
                en_launched: Counter, w: Weights, det: dict) -> float:
     """Verluste seit me_before/en_before: verschwundene Elite/Champions minus die, die angegriffen haben."""
     me_after, en_after = _ht_count(s.me), _ht_count(s.enemy)
-    lost = Counter({t: max(0, me_before[t] - me_after[t] - me_launched[t]) for t in ("elite", "champion")})
-    killed = Counter({t: max(0, en_before[t] - en_after[t] - en_launched[t]) for t in ("elite", "champion")})
+    # Einfache dicts statt Counter (Heisspfad); Counter.update behandelt beide gleich.
+    lost = {t: max(0, me_before[t] - me_after[t] - me_launched[t]) for t in ("elite", "champion")}
+    killed = {t: max(0, en_before[t] - en_after[t] - en_launched[t]) for t in ("elite", "champion")}
     det["ht_lost"].update(lost)
     det["ht_killed"].update(killed)
     return w.ht_enemy * _ht_loss_value(s.enemy, killed, w) - _ht_loss_value(s.me, lost, w)
 
 
-def _material(side):
+def _material(side) -> list:
+    out = []
     for p in side.pieces:
-        if p.kind == "form":
-            yield p.power
-        elif p.kind == "wall":
-            yield p.hp
-        elif p.kind == "unit":
-            yield IDLE_VALUE[p.tier]
-        elif p.kind == "block" and p.h == 2 and not p.merged:  # erkannte, aber unbewegliche Elite/Champion
-            yield IDLE_VALUE["champion" if p.w == 2 else "elite"]
+        kind = p.kind
+        if kind == "form":
+            out.append(p.power)
+        elif kind == "wall":
+            out.append(p.hp)
+        elif kind == "unit":
+            out.append(IDLE_VALUE[p.tier])
+        elif kind == "block" and p.h == 2 and not p.merged:  # erkannte, aber unbewegliche Elite/Champion
+            out.append(IDLE_VALUE["champion" if p.w == 2 else "elite"])
+    return out
 
 
 def _actions(state: State) -> list[tuple]:
@@ -435,6 +450,10 @@ def _next_turn(state: State, w: Weights) -> tuple[State | None, float]:
 # Verstaerkung im Folgezug der Vorausschau (Anzahl Wuerfe; 0 = aus)
 LOOKAHEAD_REINFORCE = 0
 
+# Auch die einzelnen Bewertungen der Hauptsuche verteilen (viele kleine Aufgaben). Lohnt unter
+# CPython; unter PyPy ist eine Bewertung so schnell, dass das Uebertragen mehr kostet.
+FINE_PARALLEL = os.environ.get("COH_FINE_PARALLEL", "1") == "1"
+
 _POOL = None
 _POOL_FAILED = False
 
@@ -446,52 +465,91 @@ def _workers() -> int:
         return 1
 
 
+def _low_priority() -> None:
+    """Hilfsprozesse mit niedriger Prioritaet: Das Spiel bleibt fluessig, waehrend gerechnet wird."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.SetPriorityClass(k.GetCurrentProcess(), 0x4000)  # BELOW_NORMAL_PRIORITY_CLASS
+        else:
+            os.nice(5)
+    except Exception:
+        pass
+
+
 def _pool():
     """Einmal gestartet, bleibt der Pool fuer weitere Analysen bestehen (Startkosten nur einmal)."""
     global _POOL, _POOL_FAILED
     if _POOL is None and not _POOL_FAILED and _workers() > 1:
         try:
             from concurrent.futures import ProcessPoolExecutor
-            _POOL = ProcessPoolExecutor(max_workers=_workers())
+            _POOL = ProcessPoolExecutor(max_workers=_workers(), initializer=_low_priority)
         except (OSError, ImportError, NotImplementedError):
             _POOL_FAILED = True
     return _POOL
 
 
-def _lookahead_all(pick: list["Plan"], w: Weights, horizon: int, budget: int,
-                   parallel: bool = False) -> list["Plan"]:
+def _pmap(fn, items: list, parallel: bool, min_items: int = 2) -> list:
+    """fn ueber items, bei parallel=True im Prozess-Pool. Reihenfolge und Werte sind identisch
+    zur seriellen Rechnung (jede Aufgabe ist fuer sich deterministisch); bei Problemen seriell."""
     global _POOL, _POOL_FAILED
-    pool = _pool() if parallel and len(pick) > 1 else None
+    pool = _pool() if parallel and len(items) >= min_items else None
     if pool is not None:
-        n = len(pick)
         try:
-            return list(pool.map(_lookahead, pick, [w] * n, [horizon] * n, [budget] * n))
+            chunk = max(1, len(items) // (4 * _workers()))  # wenige grosse Pakete: weniger Overhead
+            return list(pool.map(fn, items, chunksize=chunk))
         except Exception:  # z. B. BrokenProcessPool -> ab jetzt seriell
             _POOL_FAILED, _POOL = True, None
-    return [_lookahead(c, w, horizon, budget) for c in pick]
+    return [fn(x) for x in items]
+
+
+def _score_task(args) -> tuple[float, dict]:
+    """Bewertung einer Stellung wie finish() in solve(): Simulation + statischer Bonus."""
+    s, w, horizon = args
+    sc, det = evaluate(s, w, horizon)
+    return sc + static_bonus(s, w), det
+
+
+def _lookahead_all(pick: list["Plan"], w: Weights, horizon: int, budget: int,
+                   parallel: bool = False) -> list["Plan"]:
+    # Feiner aufgeteilt als je Plan: jeder Wurf (sample) ist eine eigene Aufgabe -> bessere Auslastung.
+    tasks = [(st, w, horizon, budget) for p in pick for st in (p.details.get("samples") or [p.state])]
+    res = iter(_pmap(_lookahead_sample, tasks, parallel))
+    return [_lookahead_join(p, [next(res) for _ in (p.details.get("samples") or [p.state])], w)
+            for p in pick]
+
+
+def _lookahead_sample(args) -> tuple[float, "State | None", list | None]:
+    """Ein Wurf der Vorausschau: Runde weiter, dann bester eigener Folgezug (ohne Gegnerzuege)."""
+    st, w, horizon, budget = args
+    s2, value = _next_turn(st, w)
+    if s2 is None:
+        return value, None, None
+    sub = solve(s2, w, beam=20, max_depth=6, node_budget=budget, top=1,
+                horizon=max(2, horizon - 1), reinforce_samples=LOOKAHEAD_REINFORCE, lookahead=0)[0]
+    return value + w.discount * sub.score, s2, sub.actions
+
+
+def _lookahead_join(plan: "Plan", parts: list, w: Weights) -> "Plan":
+    """Wuerfe eines Plans zusammenfassen (gleiche Summationsreihenfolge wie frueher seriell)."""
+    total, follow = 0.0, None
+    for value, s2, acts in parts:
+        total += value
+        if s2 is not None and follow is None:
+            follow = (s2, acts)
+    total += plan.details.get("setup_correction", 0.0) * len(parts)  # Erwartung statt nur 2 Wuerfe
+    det = dict(plan.details)
+    det["lookahead"] = True
+    if follow:
+        det["next_state"], det["next_actions"] = follow
+    return Plan(plan.actions, total / len(parts), plan.state, det)
 
 
 def _lookahead(plan: "Plan", w: Weights, horizon: int, budget: int) -> "Plan":
     """Bewertet einen Plan inklusive des besten eigenen Folgezuges (ohne Gegnerzuege).
     So zaehlen Vorbereitungen, deren Nutzen erst im naechsten Zug kommt (Champion aktivieren)."""
-    states = plan.details.get("samples") or [plan.state]
-    total, follow = 0.0, None
-    for st in states:
-        s2, value = _next_turn(st, w)
-        if s2 is None:
-            total += value
-            continue
-        sub = solve(s2, w, beam=20, max_depth=6, node_budget=budget, top=1,
-                    horizon=max(2, horizon - 1), reinforce_samples=LOOKAHEAD_REINFORCE, lookahead=0)[0]
-        total += value + w.discount * sub.score
-        if follow is None:
-            follow = (s2, sub.actions)
-    total += plan.details.get("setup_correction", 0.0) * len(states)  # Erwartung statt nur 2 Wuerfe
-    det = dict(plan.details)
-    det["lookahead"] = True
-    if follow:
-        det["next_state"], det["next_actions"] = follow
-    return Plan(plan.actions, total / len(states), plan.state, det)
+    return _lookahead_all([plan], w, horizon, budget, parallel=False)[0]
 
 
 def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int = 8,
@@ -511,8 +569,13 @@ def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int
     nodes = 0
 
     def finish(p: Plan) -> Plan:
-        sc, det = evaluate(p.state, w, horizon)
-        return Plan(p.actions, sc + static_bonus(p.state, w), p.state, det)
+        sc, det = _score_task((p.state, w, horizon))
+        return Plan(p.actions, sc, p.state, det)
+
+    def finish_all(ps: list[Plan]) -> list[Plan]:
+        # Bewertung parallel; Erzeugung und Reihenfolge der Kinder bleiben seriell wie zuvor.
+        scored = _pmap(_score_task, [(p.state, w, horizon) for p in ps], parallel and FINE_PARALLEL, min_items=16)
+        return [Plan(p.actions, sc, p.state, det) for p, (sc, det) in zip(ps, scored)]
 
     root = finish(frontier[0])  # Ausgangsstellung (fuer 'zuerst Verstaerkung')
     candidates.append(root)
@@ -527,10 +590,11 @@ def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int
                 if k in seen:
                     continue
                 seen.add(k)
-                children.append(finish(Plan(plan.actions + [a], 0.0, s2)))
+                children.append(Plan(plan.actions + [a], 0.0, s2))
                 nodes += 1
             if nodes >= node_budget or time.time() - t0 > time_limit:
                 break
+        children = finish_all(children)
         if not children:
             break
         children.sort(key=lambda p: p.score, reverse=True)
@@ -571,7 +635,8 @@ def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int
                     if k in seen:
                         continue
                     seen.add(k)
-                    children.append(finish(Plan(plan.actions + [a], 0.0, s2)))
+                    children.append(Plan(plan.actions + [a], 0.0, s2))
+            children = finish_all(children)
             if not children or time.time() - t0 > time_limit:
                 break
             frontier = diverse(children, complete_beam)
@@ -579,11 +644,11 @@ def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int
     candidates.extend(finish(Plan(acts, 0.0, s)) for acts, s in _rescue_sequences(start))
     candidates.sort(key=lambda p: p.score, reverse=True)
     if reinforce_samples > 0:
-        candidates = _add_reinforce(candidates, w, horizon, reinforce_samples) + candidates
+        candidates = _add_reinforce(candidates, w, horizon, reinforce_samples, parallel=parallel) + candidates
         # Zuerst Verstaerkung: Danach haelt der Spieler L1 neu und plant mit den neuen Einheiten
         # (auch Elite/Champions, mehr Loesch-Optionen). Deshalb Fortsetzung per kleiner Suche
         # statt nur gierig -- sonst waere diese Option systematisch unterbewertet.
-        first = _reinforce_first(root, w, horizon, reinforce_samples) if reinforce_first else None
+        first = _reinforce_first(root, w, horizon, reinforce_samples, parallel=parallel) if reinforce_first else None
         if first is not None:
             candidates.append(first)
     candidates.sort(key=lambda p: p.score, reverse=True)
@@ -711,39 +776,53 @@ def _rescue_sequences(state: State):
 SETUP_SAMPLES = 32  # Wuerfe fuer den Erwartungswert "was faellt hinter Elite/Champions"
 
 
-def _add_reinforce(cands: list[Plan], w: Weights, horizon: int, samples: int, k: int = 4) -> list[Plan]:
+def _reinforce_sample(args) -> tuple[float, State]:
+    """Ein Wurf von _add_reinforce: nachrufen, gierig weiter, bewerten."""
+    st, seed, w, horizon = args
+    s, _ = apply_action(st, ("reinforce", 0, seed))
+    for _ in range(s.moves_left):  # gierig weiter
+        best = None
+        for a in _actions(s):
+            s2, _ = apply_action(s, a)
+            sc = evaluate(s2, w, 2)[0]
+            if best is None or sc > best[0]:
+                best = (sc, s2)
+        if best is None:
+            break
+        s = best[1]
+    sc, _ = evaluate(s, w, horizon)
+    return sc + static_bonus(s, w), s
+
+
+def _add_reinforce(cands: list[Plan], w: Weights, horizon: int, samples: int, k: int = 4,
+                   parallel: bool = False) -> list[Plan]:
     """Verstaerkung als letzte Aktion eines Plans: Wert = Mittel ueber feste Zufalls-Seeds
     (deterministisch), jeweils mit gieriger Fortsetzung fuer die restlichen Zuege.
 
     Was hinter idle Elite/Champions faellt (passende Farbe = Vorbereitung, fremde = verschuettet),
     streut stark. Die teure Simulation laeuft nur ueber `samples` Wuerfe; dieser Teil wird
     zusaetzlich ueber SETUP_SAMPLES Wuerfe gemittelt und als Korrektur eingerechnet."""
-    out = []
+    chosen = []
     done = set()
-    for plan in cands:
-        if len(out) >= k:
+    for plan in cands:  # Auswahl haengt nicht von den Ergebnissen ab -> vorab festlegen
+        if len(chosen) >= k:
             break
         st = plan.state
         if st.moves_left < 1 or st.me.reserve <= 0 or st.key() in done:
             continue
         done.add(st.key())
+        chosen.append(plan)
+    res = iter(_pmap(_reinforce_sample, [(p.state, seed, w, horizon) for p in chosen
+                                         for seed in range(samples)], parallel))
+    out = []
+    for plan in chosen:
+        st = plan.state
         total, sample_states = 0.0, []
-        for seed in range(samples):
-            s, _ = apply_action(st, ("reinforce", 0, seed))
-            for _ in range(s.moves_left):  # gierig weiter
-                best = None
-                for a in _actions(s):
-                    s2, _ = apply_action(s, a)
-                    sc = evaluate(s2, w, 2)[0]
-                    if best is None or sc > best[0]:
-                        best = (sc, s2)
-                if best is None:
-                    break
-                s = best[1]
-            sc, _ = evaluate(s, w, horizon)
-            total += sc + static_bonus(s, w)
+        for _seed in range(samples):
+            v, s = next(res)
+            total += v
             sample_states.append(s)
-        setups = [_high_tier_setup(apply_action(st, ("reinforce", 0, seed))[0], w)
+        setups =[_high_tier_setup(apply_action(st, ("reinforce", 0, seed))[0], w)
                   for seed in range(max(samples, SETUP_SAMPLES))]
         correction = sum(setups) / len(setups) - sum(setups[:samples]) / samples
         out.append(Plan(plan.actions + [("reinforce", 0, 0)], total / samples + correction, st,
@@ -753,25 +832,29 @@ def _add_reinforce(cands: list[Plan], w: Weights, horizon: int, samples: int, k:
     return out
 
 
-def _reinforce_first(root: Plan, w: Weights, horizon: int, samples: int) -> Plan | None:
+def _reinforce_first_sample(args) -> tuple[float, State]:
+    st, seed, w, horizon = args
+    s, _ = apply_action(st, ("reinforce", 0, seed))
+    if s.moves_left > 0:
+        sub = solve(s, w, beam=10, max_depth=4, node_budget=150, top=1, horizon=horizon,
+                    reinforce_samples=0, lookahead=0, complete=2, complete_beam=4, extend_top=0,
+                    reinforce_first=False)[0]
+        return sub.score, sub.state
+    sc, _ = evaluate(s, w, horizon)
+    return sc + static_bonus(s, w), s
+
+
+def _reinforce_first(root: Plan, w: Weights, horizon: int, samples: int,
+                     parallel: bool = False) -> Plan | None:
     """Verstaerkung als ERSTE Aktion: Mittel ueber feste Wuerfe, danach jeweils der beste Rest-Zug
     aus einer kleinen Suche (wie der Spieler, der nach dem Nachrufen L1 neu haelt)."""
     st = root.state
     if st.moves_left < 1 or st.me.reserve <= 0 or samples <= 0:
         return None
     total, states = 0.0, []
-    for seed in range(samples):
-        s, _ = apply_action(st, ("reinforce", 0, seed))
-        if s.moves_left > 0:
-            sub = solve(s, w, beam=10, max_depth=4, node_budget=150, top=1, horizon=horizon,
-                        reinforce_samples=0, lookahead=0, complete=2, complete_beam=4, extend_top=0,
-                        reinforce_first=False)[0]
-            total += sub.score
-            states.append(sub.state)
-        else:
-            sc, _ = evaluate(s, w, horizon)
-            total += sc + static_bonus(s, w)
-            states.append(s)
+    for v, s in _pmap(_reinforce_first_sample, [(st, seed, w, horizon) for seed in range(samples)], parallel):
+        total += v
+        states.append(s)
     return Plan([("reinforce", 0, 0)], total / samples, st, {"samples": states[:2], "reinforce_first": True})
 
 

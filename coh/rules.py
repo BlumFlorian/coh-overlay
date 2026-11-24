@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .model import (COLS, FORM_UNITS, ROWS, RULES, Piece, Side, State, make_formation, stat)
+from .model import (COLS, FORM_UNITS, ROWS, RULES, TIER, Piece, Side, State, make_formation, stat)
 
 
 # --------------------------------------------------------------------------- Aufraeumen / Ordnung
@@ -16,24 +16,39 @@ def rebuild(side: Side) -> None:
 
     Entspricht gleichzeitig der Schwerkraft zur Front. Was nicht mehr passt, geht in die Reserve.
     """
-    prio = {"wall": 0, "form": 1, "unit": 2}
-
-    def key(p):
-        pr = (1 if p.merged else 2) if p.kind == "block" else prio[p.kind]
-        return (pr, p.uid if pr == 1 else p.row, p.col)
-    order = sorted(side.pieces, key=key)
+    order = sorted(side.pieces, key=_rebuild_key)
     fill = [0] * COLS
     kept = []
     for p in order:
-        row = max(fill[c] for c in p.cols())
-        if row + p.h > ROWS:
+        c0, w, h = p.col, p.w, p.h
+        if w == 1:
+            row = fill[c0]
+        else:
+            row = max(fill[c0:c0 + w])
+        if row + h > ROWS:
             side.reserve += FORM_UNITS[p.tier] if p.kind == "form" else (1 if p.kind == "unit" else 0)
             continue
         p.row = row
-        for c in p.cols():
-            fill[c] = row + p.h
+        if w == 1:
+            fill[c0] = row + h
+        else:
+            for c in range(c0, c0 + w):
+                fill[c] = row + h
         kept.append(p)
     side.pieces = kept
+
+
+_PRIO = {"wall": 0, "form": 1, "unit": 2}
+
+
+def _rebuild_key(p):
+    kind = p.kind
+    pr = (1 if p.merged else 2) if kind == "block" else _PRIO[kind]
+    return (pr, p.uid if pr == 1 else p.row, p.col)
+
+
+def _row_col(q):
+    return (q.row, q.col)
 
 
 @dataclass
@@ -47,78 +62,86 @@ class Match:
 
 
 def find_matches(side: Side) -> list[Match]:
-    # Einmal vorsortieren: idle Core-Einheiten je Feld und idle Elite/Champions (Heisspfad der Suche).
-    cores: dict[tuple[int, int], Piece] = {}
+    # Heisspfad der Suche (Hunderttausende Aufrufe je Analyse): Hilfsfunktionen sind eingeklappt,
+    # das Brett liegt als Liste je Spalte/Reihe vor. Verhalten wie zuvor (Differenztest).
+    grid = [None] * (COLS * ROWS)  # Index c * ROWS + r
+    any_core = False
     high: list[Piece] = []
     for p in side.pieces:
         if p.kind != "unit":
             continue
-        if p.tier == "core":
+        u = p.unit
+        if u and TIER[u] == "core":
+            base = p.col * ROWS
             for r in range(p.row, p.row + p.h):
-                cores[(p.col, r)] = p
+                if 0 <= r < ROWS:  # nach rebuild() liegt alles im Feld
+                    grid[base + r] = p
+            any_core = True
         else:
             high.append(p)
     used: set[int] = set()
     out: list[Match] = []
 
-    def idle_core(c, r, color=None, unit=None):
-        p = cores.get((c, r))
-        if p is None or id(p) in used:
-            return None
-        if color and p.color != color:
-            return None
-        if unit and p.unit != unit:
-            return None
-        return p
-
     # High-Tier zuerst: Champion (2x2) bzw. Elite (1x2) mit gleichfarbigen Core dahinter.
-    for p in sorted(high, key=lambda q: (q.row, q.col)):
-        if id(p) in used:
-            continue
-        behind = [(c, p.row + p.h + k) for k in range(2) for c in p.cols()]
-        support = [idle_core(c, r, color=p.color) for c, r in behind]
-        if all(support) and len({id(s) for s in support}) == len(support):
-            used.update(id(s) for s in support)
-            used.add(id(p))
-            out.append(Match("form", [p, *support], p.col, p.row, p.unit, p.color))
+    if high:
+        for p in sorted(high, key=_row_col):
+            if id(p) in used:
+                continue
+            color = p.color
+            support = []
+            for k in range(2):
+                r = p.row + p.h + k
+                for c in range(p.col, p.col + p.w):
+                    q = grid[c * ROWS + r] if r < ROWS and 0 <= c < COLS else None
+                    if q is None or id(q) in used or (color and q.color != color):
+                        support = None
+                        break
+                    support.append(q)
+                if support is None:
+                    break
+            if support is not None and len({id(s) for s in support}) == len(support):
+                used.update(id(s) for s in support)
+                used.add(id(p))
+                out.append(Match("form", [p, *support], p.col, p.row, p.unit, p.color))
+
+    if not any_core:
+        return out
 
     # Core: 3 gleiche Einheiten gleicher Farbe senkrecht.
     for c in range(COLS):
+        col = grid[c * ROWS:(c + 1) * ROWS]
         r = 0
         while r <= ROWS - 3:
-            a = idle_core(c, r)
-            b = a and idle_core(c, r + 1, a.color, a.unit)
-            d = b and idle_core(c, r + 2, a.color, a.unit)
-            if a and b and d:
-                used.update((id(a), id(b), id(d)))
-                out.append(Match("form", [a, b, d], c, r, a.unit, a.color))
-                r += 3
-            else:
-                r += 1
+            a = col[r]
+            if a is not None and id(a) not in used:
+                ac, au = a.color, a.unit
+                b, d = col[r + 1], col[r + 2]
+                if (b is not None and id(b) not in used and (not ac or b.color == ac) and (not au or b.unit == au)
+                        and d is not None and id(d) not in used and (not ac or d.color == ac)
+                        and (not au or d.unit == au)):
+                    used.update((id(a), id(b), id(d)))
+                    out.append(Match("form", [a, b, d], c, r, a.unit, a.color))
+                    r += 3
+                    continue
+            r += 1
 
     # Waende: >= 3 gleichfarbige idle Core waagerecht (Typ egal). Einheiten, die gerade senkrecht
     # zu einer Formation werden, zaehlen fuer die Reihe mit (Combo), werden aber nicht zur Wand.
     vertical_used = set(used)
 
-    def core_any(c, r, color=None):
-        p = cores.get((c, r))
-        if p is None:
-            return None
-        if color and p.color != color:
-            return None
-        return p
-
     for r in range(ROWS):
+        row = grid[r::ROWS]
         c = 0
         while c < COLS:
-            a = core_any(c, r)
-            if not a:
+            a = row[c]
+            if a is None:
                 c += 1
                 continue
             run = [a]
+            ac = a.color
             while c + len(run) < COLS:
-                n = core_any(c + len(run), r, a.color)
-                if not n:
+                n = row[c + len(run)]
+                if n is None or (ac and n.color != ac):
                     break
                 run.append(n)
             free = [x for x in run if id(x) not in used]

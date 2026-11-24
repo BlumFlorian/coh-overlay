@@ -146,10 +146,21 @@ class Side:
         return FACTIONS[self.hero.faction]
 
     def copy(self) -> "Side":
-        s = copy.copy(self)
-        s.hero = copy.copy(self.hero)
-        s.pieces = [p.copy() for p in self.pieces]
-        s.stock = dict(self.stock) if self.stock is not None else None
+        # Heisspfad der Suche: flache Kopien ueber __dict__ statt copy.copy (gleiches Ergebnis).
+        s = object.__new__(Side)
+        d = s.__dict__
+        d.update(self.__dict__)
+        h = object.__new__(Hero)
+        h.__dict__.update(self.hero.__dict__)
+        d["hero"] = h
+        new = object.__new__
+        pieces = []
+        for p in self.pieces:
+            q = new(Piece)
+            q.__dict__ = p.__dict__.copy()
+            pieces.append(q)
+        d["pieces"] = pieces
+        d["stock"] = dict(self.stock) if self.stock is not None else None
         return s
 
     def sig(self) -> tuple:
