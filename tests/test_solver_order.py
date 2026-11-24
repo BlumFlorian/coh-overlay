@@ -56,3 +56,24 @@ def test_idle_champion_always_gets_nearest_color():
     champ = g[(5, 1)]
     assert champ.unit == "champion" and champ.color == g[(1, 3)].color  # goldener Speertraeger
     assert (5, 1) in meta["guessed"]
+
+
+def test_split_blue_archers_and_bar_digit_in_charging_griffin():
+    """Analyse 20261124_145258: (1) blaue Bogenschuetzen in zwei Klassen zerfallen -> blaue Mauern
+    unsichtbar; (2) Balken-Ziffer des ladenden Greifs als 'Wand 5' gelesen und Ladezeit 4 als
+    Ersatzwert 2 (Feder an der Ziffer)."""
+    f = ROOT / "dataset" / "analysis" / "20261124_145258.png"
+    if not f.exists():
+        pytest.skip("Aufnahme nicht vorhanden")
+    import numpy as np
+    from PIL import Image
+
+    from coh.vision import analyze
+
+    st, _ = analyze(np.asarray(Image.open(f).convert("RGB")), moves=3, cursor_col=7)
+    g = st.me.grid()
+    blue = [(7, 1), (7, 2), (1, 3), (1, 4), (4, 2), (5, 3), (3, 4), (5, 4), (4, 5)]
+    assert len({g[c].color for c in blue}) == 1
+    griffin = g[(5, 1)]
+    assert griffin.kind == "form" and griffin.w == 2 and griffin.ct == 4
+    assert not any(p.kind in ("wall", "block") and p.row > 0 for p in st.me.pieces)

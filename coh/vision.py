@@ -271,16 +271,36 @@ def _ct_templates():
     return _ct_cache
 
 
+def _open1(m: np.ndarray) -> np.ndarray:
+    """Morphologische Oeffnung (3x3): trennt duenne Bruecken, z. B. Federn, die an der Ziffer haengen."""
+    p = np.pad(m, 1)
+    h, w = m.shape
+    er = np.ones_like(m)
+    for dy in range(3):
+        for dx in range(3):
+            er &= p[dy:dy + h, dx:dx + w]
+    p = np.pad(er, 1)
+    di = np.zeros_like(m)
+    for dy in range(3):
+        for dx in range(3):
+            di |= p[dy:dy + h, dx:dx + w]
+    return di & m
+
+
 def read_ct_digit(a: np.ndarray) -> tuple[int | None, float]:
     from . import digits as D
-    n = D._norm(ct_silhouette(a))
-    if n is None:
-        return None, 0.0
+    sil = ct_silhouette(a)
     best, bs = None, -1.0
-    for d, t, tasp in _ct_templates():
-        s = float((n[0] * t).sum()) - 0.6 * abs(np.log(n[1] / tasp))
-        if s > bs:
-            best, bs = d, s
+    # Zweite Lesart ohne duenne Anhaengsel (Analyse 20261124_145258: Greifenfeder an der "4",
+    # Vorlage passte nur zu 37 % -> Ersatzwert 2). Die bessere Uebereinstimmung zaehlt.
+    for m in (sil, D.largest_component(_open1(sil))):
+        n = D._norm(m)
+        if n is None:
+            continue
+        for d, t, tasp in _ct_templates():
+            s = float((n[0] * t).sum()) - 0.6 * abs(np.log(n[1] / tasp))
+            if s > bs:
+                best, bs = d, s
     return best, bs
 
 
@@ -519,6 +539,12 @@ def scan_side(img: np.ndarray, geo: Geometry, who: str, cursor_col: int | None =
                 continue
         scan.bars.append((c0, c1, r))
         scan.bar_info[(c0, c1, r)] = bar
+        # Wo ein Ladebalken liegt, steht keine Wand. Ein roter/oranger Champion (Greif) taeuscht
+        # das Herz-Symbol vor, die Balken-Ziffer wirkt wie Wand-HP (Analyse 20261124_145258:
+        # "Wand 5" mitten im ladenden Greif -> Champion zerfiel in Hindernisse).
+        for c in range(c0, c1 + 1):
+            if scan.cells[(c, r)].kind == "wall":
+                scan.cells[(c, r)].kind, scan.cells[(c, r)].tough = "empty", None
     # Cursor auf einer Einheit ohne etwas davor (z. B. Reihe 1): Herz verdeckt, keine Ersatzregel
     # oben greift. Ein leeres Feld zeigt der Cursor als glatte Cyan-Flaeche (>= 84 % Cyan in 139
     # Bildern), eine Einheit mit Figur + Zahl/Balken (<= 52 %). Analyse 20261123_122949: Schwert-
@@ -609,7 +635,8 @@ def merge_scans(scans: list[SideScan]) -> SideScan:
     return out
 
 
-def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: float = 0.45) -> None:
+def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: float = 0.45,
+             relax: float = 0.9) -> None:
     """Average-Linkage-Clustering der Core-Einheiten; Einzelgaenger werden der naechsten Klasse
     zugeordnet, wenn sie nah genug sind."""
     units = [v for _, v in sorted(scan.cells.items()) if v.kind == "unit" and v.tier == "core" and not v.cursor]
@@ -628,7 +655,13 @@ def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: fl
                 if d < best:
                     best, bi, bj = d, i, j
         if best > link:
-            break
+            # Mehr als 3 Gruppen (je >= 2 Einheiten) gleicher Toughness sind meist eine zerfallene
+            # Farbe (Bogenschuetzen: Arm/Bogen je nach Animation, Blau-Blau bis 1.33). Dann auch
+            # etwas weiter auseinander noch verschmelzen. Analyse 20261124_145258: Blau als B und C
+            # -> blaue Mauern (waagerecht) wurden nicht gesehen.
+            n_two = sum(1 for c in clusters if len(c) >= 2)
+            if not (n_two > 3 and best <= relax and len(clusters[bi]) >= 2 and len(clusters[bj]) >= 2):
+                break
         # Eine Armee hat 3 Kernfarben. Zwei grosse Gruppen (je >= 3 Einheiten) nur dann noch
         # verschmelzen, wenn sie sich sehr aehnlich sind, solange es dadurch weniger als 3 Gruppen
         # gaebe. Analyse 20261124_134539: Blau und Weiss (Bogenschuetzen) bei 0.54 zu einer Klasse
