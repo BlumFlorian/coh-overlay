@@ -372,12 +372,29 @@ def _saturation(px: np.ndarray) -> float:
     return float(((sat > 0.3) & (mx > 0.25) & ~sand).mean()) if len(f) else 0.0
 
 
+def _cursor_col_from_tint(img: np.ndarray, geo: Geometry, cursor_col: int) -> int:
+    """Gegenprobe zur Cursor-Spalte aus dem Zug-Emblem. Der Cursor springt sofort, das Emblem
+    gleitet hinterher. Steht der Cursor auf einem leeren Feld (glatte Cyan-Flaeche, >= 0.8) in einer
+    anderen Spalte, gilt diese -- nur wenn genau eine Zelle so aussieht und die Emblem-Spalte
+    kein Cursor-Anzeichen hat. (Analysen 20261113_000246, _001246, 20261124_125533)"""
+    tint = {(c, r): _frac(_cursor_tint(_rgb(img, *geo.cell_box("me", c, r))))
+            for c in range(COLS) for r in range(ROWS)}
+    if max(tint[(cursor_col, r)] for r in range(ROWS)) >= 0.25:
+        return cursor_col
+    strong = [k for k, t in tint.items() if t >= 0.8]
+    if len(strong) == 1 and not any(t >= 0.6 for k, t in tint.items() if k != strong[0]):
+        return strong[0][0]
+    return cursor_col
+
+
 def scan_side(img: np.ndarray, geo: Geometry, who: str, cursor_col: int | None = None) -> SideScan:
     scan = SideScan()
     torsos = {}
     cursor_cell = None
+    if cursor_col is not None and who == "me":
+        cursor_col = _cursor_col_from_tint(img, geo, cursor_col)
     if cursor_col is not None:
-        fr = [(_frac(_cursor_tint(_rgb(img, *geo.cell_box(who, cursor_col, r)))), r) for r in range(ROWS)]
+        fr =[(_frac(_cursor_tint(_rgb(img, *geo.cell_box(who, cursor_col, r)))), r) for r in range(ROWS)]
         fr.sort(reverse=True)
         if fr[0][0] > 0.6 or (fr[0][0] > 0.25 and fr[0][0] > 2.5 * fr[1][0]):  # deutlich eingefaerbt
             cursor_cell = (cursor_col, fr[0][1])
@@ -454,7 +471,8 @@ def scan_side(img: np.ndarray, geo: Geometry, who: str, cursor_col: int | None =
                     real = False
             if not real:
                 ahead = [scan.cells[(c0, rr)].kind for rr in range(ROWS) if (rr - r) * front > 0]
-                if any(k != "empty" for k in ahead) and scan.cells[(c0, r)].kind == "empty":
+                if any(k != "empty" for k in ahead) and scan.cells[(c0, r)].kind == "empty" \
+                        and _frac(_cursor_tint(_rgb(img, *geo.cell_box(who, c0, r)))) < 0.7:  # glatt cyan = leer
                     scan.cells[(c0, r)].kind = "unit"  # Einheit unter dem Cursor, Typ unbekannt
                 continue
         scan.bars.append((c0, c1, r))
@@ -545,7 +563,7 @@ def merge_scans(scans: list[SideScan]) -> SideScan:
     return out
 
 
-def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62) -> None:
+def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: float = 0.45) -> None:
     """Average-Linkage-Clustering der Core-Einheiten; Einzelgaenger werden der naechsten Klasse
     zugeordnet, wenn sie nah genug sind."""
     units = [v for _, v in sorted(scan.cells.items()) if v.kind == "unit" and v.tier == "core" and not v.cursor]
@@ -564,6 +582,13 @@ def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62) -> None:
                 if d < best:
                     best, bi, bj = d, i, j
         if best > link:
+            break
+        # Eine Armee hat 3 Kernfarben. Zwei grosse Gruppen (je >= 3 Einheiten) nur dann noch
+        # verschmelzen, wenn sie sich sehr aehnlich sind, solange es dadurch weniger als 3 Gruppen
+        # gaebe. Analyse 20261124_134539: Blau und Weiss (Bogenschuetzen) bei 0.54 zu einer Klasse
+        # verschmolzen -> erfundene Formationen ("Chain +7").
+        n_big = sum(1 for c in clusters if len(c) >= 3)
+        if len(clusters[bi]) >= 3 and len(clusters[bj]) >= 3 and n_big <= 3 and best > keep3:
             break
         clusters[bi] += clusters.pop(bj)
     # Einzelgaenger: der naechsten Klasse zuordnen, wenn nah genug -- sonst eigene Klasse

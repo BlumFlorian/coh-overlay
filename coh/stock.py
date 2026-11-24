@@ -92,6 +92,8 @@ def _read_count(band: np.ndarray, t: float) -> tuple[int, int] | None:
         y0, y1, x0, x1 = _box(c)
         if not (y0 >= sy0 - 0.25 * H and y1 <= sy1 + 0.25 * H and y1 - y0 + 1 >= 0.3 * H):
             continue  # nicht in der Textzeile (Icon-Reste)
+        if x1 - x0 + 1 > 0.9 * H:
+            continue  # breiter als jede Ziffer: Icon ragt in die Zeile (graue Klinge des Schwertmeisters)
         if x1 < sx0 + 2:
             left.append(c)
         elif x0 > sx1 - 2:
