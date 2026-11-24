@@ -403,6 +403,51 @@ def _closer(before: tuple, after: tuple) -> bool:
     return any(y < x for x, y in zip(b, a)) and all(y <= x for x, y in zip(b, a))
 
 
+def _legal(state: State, a: tuple) -> bool:
+    kind = a[0]
+    if kind == "spell":
+        return state.me.hero.spell_ready()
+    if state.moves_left <= 0:
+        return False
+    if kind == "move":
+        return a in legal_moves(state)
+    if kind == "delete":
+        return a in legal_deletes(state)
+    return False
+
+
+def _reorder_variants(start: State, plans: list["Plan"], known: set) -> list[tuple[list, State]]:
+    """Dieselben Aktionen in anderer Reihenfolge: jede Bewegung einmal vor jede fruehere Aktion gezogen.
+
+    Typischer Fall (Nutzer, 2026-11-24): Erst die passende Einheit hinter den Blocker stellen, dann
+    den Blocker loeschen. Dann entsteht die Formation durch das Loeschen (Chain -> Extrazug), statt
+    durch die Bewegung. Die Suche findet das selten, weil "hinten anstellen" allein nichts bringt.
+    Jede Variante wird komplett nachgespielt und muss Schritt fuer Schritt legal sein."""
+    out = []
+    for plan in plans:
+        acts = [a for a in plan.actions if a[0] != "reinforce"]
+        if len(acts) < 2 or len(acts) != len(plan.actions):
+            continue
+        for j, a in enumerate(acts):
+            if a[0] != "move":
+                continue
+            for i in range(j):
+                if acts[i][0] == "spell":
+                    continue
+                seq = acts[:i] + [a] + acts[i:j] + acts[j + 1:]
+                s = start
+                ok = True
+                for b in seq:
+                    if not _legal(s, b):
+                        ok = False
+                        break
+                    s, _ = apply_action(s, b)
+                if ok and s.key() not in known:
+                    known.add(s.key())
+                    out.append((seq, s))
+    return out
+
+
 def _plain_delete(plan: "Plan") -> bool:
     return bool(plan.actions) and plan.actions[-1][0] == "delete" and plan.state.moves_left == 0
 
@@ -527,7 +572,7 @@ def _lookahead_sample(args) -> tuple[float, "State | None", list | None]:
     if s2 is None:
         return value, None, None
     sub = solve(s2, w, beam=20, max_depth=6, node_budget=budget, top=1,
-                horizon=max(2, horizon - 1), reinforce_samples=LOOKAHEAD_REINFORCE, lookahead=0)[0]
+                horizon=max(2, horizon - 1), reinforce_samples=LOOKAHEAD_REINFORCE, lookahead=0, reorder=0)[0]
     return value + w.discount * sub.score, s2, sub.actions
 
 
@@ -556,7 +601,7 @@ def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int
           node_budget: int = 3000, time_limit: float = 60.0, top: int = 3, horizon: int = 5,
           reinforce_samples: int = 4, lookahead: int = 8, lookahead_budget: int = 250,
           parallel: bool = False, complete: int = 6, complete_beam: int = 10, per_first: int = 2, extend_top: int = 3,
-          reinforce_first: bool = True) -> list[Plan]:
+          reinforce_first: bool = True, reorder: int = 20) -> list[Plan]:
     """Deterministisch: gleiche Eingabe -> gleiches Ergebnis. Begrenzt wird ueber die Anzahl
     bewerteter Stellungen (node_budget), nicht ueber die Zeit; time_limit ist nur Notbremse."""
     w = w or Weights()
@@ -643,6 +688,12 @@ def solve(state: State, w: Weights | None = None, beam: int = 80, max_depth: int
             candidates.extend(frontier)
     candidates.extend(finish(Plan(acts, 0.0, s)) for acts, s in _rescue_sequences(start))
     candidates.sort(key=lambda p: p.score, reverse=True)
+    if reorder > 0:
+        known = {c.state.key() for c in candidates}
+        variants = [Plan(a, 0.0, s) for a, s in _reorder_variants(start, candidates[:reorder], known)]
+        if variants:
+            candidates.extend(finish_all(variants))
+            candidates.sort(key=lambda p: p.score, reverse=True)
     if reinforce_samples > 0:
         candidates = _add_reinforce(candidates, w, horizon, reinforce_samples, parallel=parallel) + candidates
         # Zuerst Verstaerkung: Danach haelt der Spieler L1 neu und plant mit den neuen Einheiten
@@ -838,7 +889,7 @@ def _reinforce_first_sample(args) -> tuple[float, State]:
     if s.moves_left > 0:
         sub = solve(s, w, beam=10, max_depth=4, node_budget=150, top=1, horizon=horizon,
                     reinforce_samples=0, lookahead=0, complete=2, complete_beam=4, extend_top=0,
-                    reinforce_first=False)[0]
+                    reinforce_first=False, reorder=0)[0]
         return sub.score, sub.state
     sc, _ = evaluate(s, w, horizon)
     return sc + static_bonus(s, w), s
