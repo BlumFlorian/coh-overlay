@@ -39,6 +39,7 @@ class CellInfo:
     guessed: bool = False  # Farbe nur geschaetzt (Farbton der ganzen Figur oder Saettigung)
     wide: np.ndarray | None = None  # Pixel der ganzen Figur rechts von Herz/Zahl (fuer die Elite-Farbe)
     hue: np.ndarray | None = None  # Farbton-Histogramm der ganzen Figur ohne Bodenfarben
+    vivid: np.ndarray | None = None  # nur kraeftige Farben (Ruestung statt Haut/Leder) + Weiss, siehe _vivid_hist
 
 
 @dataclass
@@ -359,6 +360,47 @@ def _hue_hist(px: np.ndarray, floor: Background) -> np.ndarray:
     return out / max(out.sum(), 1)
 
 
+def _vivid_hist(px: np.ndarray, floor: "Background") -> np.ndarray:
+    """Nur kraeftige, helle Farben (24 Farbtoene, Saettigung > 0.5) + Anteil Weiss/Hellgrau, bezogen
+    auf alle Pixel ohne Boden. Haut, Leder und Schatten fallen heraus; uebrig bleibt v. a. die
+    Ruestung. Trennt z. B. den goldenen Greif klar von blauen/weissen Klassen, was das grobe
+    Farbton-Profil (_hue_hist) nicht schafft (Analysen 20261124_143157 bis _144125)."""
+    keep = ~floor.mask(px).reshape(-1)
+    f = px.reshape(-1, 3)[keep].astype(np.float32) / 255.0
+    out = np.zeros(25, np.float32)
+    if len(f) < 20:
+        return out
+    mx, mn = f.max(1), f.min(1)
+    sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
+    r, g, b = f[:, 0], f[:, 1], f[:, 2]
+    d = np.maximum(mx - mn, 1e-6)
+    hue = np.select([mx == r, mx == g], [((g - b) / d) % 6, (b - r) / d + 2], (r - g) / d + 4) / 6.0
+    vivid = (sat > 0.5) & (mx > 0.55)
+    np.add.at(out, np.minimum((hue[vivid] * 24).astype(int), 23), 1)
+    out[24] = ((sat < 0.18) & (mx > 0.65)).sum()
+    return out / len(f)
+
+
+def _vivid_pick(h, vcents: dict, margin: float = 1.5, limit: float = 0.5):
+    """Klasse nach kraeftigen Farben, nur bei klarem Vorsprung (sonst None)."""
+    if h is None or not h.any() or len(vcents) < 2:
+        return None
+    vd = sorted((float(np.abs(vc - h).sum()), k) for k, vc in vcents.items())
+    if vd[0][0] < limit and vd[1][0] >= margin * vd[0][0]:
+        return vd[0][1]
+    return None
+
+
+def _sat_pick(sat: float | None, sats: dict):
+    """Klasse mit der naechsten Saettigung, nur bei klarem Abstand (>= 0.08) zur zweitnaechsten."""
+    if sat is None or not sats:
+        return None
+    ds = sorted((abs(sat - cs), n) for n, cs in sats.items())
+    if len(ds) == 1 or ds[1][0] - ds[0][0] >= 0.08:
+        return ds[0][1]
+    return None
+
+
 def _saturation(px: np.ndarray) -> float:
     """Anteil kraeftig farbiger Pixel ohne den sandfarbenen Boden. Weisse Einheiten (und der
     graue Schwertmeister) liegen niedrig, blaue und goldene deutlich hoeher."""
@@ -507,12 +549,14 @@ def scan_side(img: np.ndarray, geo: Geometry, who: str, cursor_col: int | None =
     for k, v in scan.cells.items():
         if v.kind == "unit":
             v.hue = _hue_hist(v.wide, floor)
+            v.vivid = _vivid_hist(v.wide, floor)
             if v.tier != "core":  # ganze Figur: 1x2 (Elite) bzw. 2x2 (Champion), Bildschirm abwaerts
                 down = 1 if who == "me" else -1
                 cells = [(k[0] + dc, k[1] + dr) for dc in range(2 if v.tier == "champion" else 1)
                          for dr in (0, down)]
-                px = [scan.cells[cc].wide.reshape(-1, 3) for cc in cells if cc in scan.cells]
-                v.hue = _hue_hist(np.concatenate(px), floor)
+                px = np.concatenate([scan.cells[cc].wide.reshape(-1, 3) for cc in cells if cc in scan.cells])
+                v.hue = _hue_hist(px, floor)
+                v.vivid = _vivid_hist(px, floor)
     for k, v in scan.cells.items():
         v.afeat = _features(torsos[k], bg)
         if v.kind == "unit":
@@ -551,6 +595,8 @@ def merge_scans(scans: list[SideScan]) -> SideScan:
         info.wide = vs[0].wide
         hues = [v.hue for v in sel if v.hue is not None]
         info.hue = np.mean(hues, 0) if hues else None
+        vivids = [v.vivid for v in sel if v.vivid is not None]
+        info.vivid = np.mean(vivids, 0) if vivids else None
         sats = [v.sat for v in sel if v.sat is not None]
         info.sat = float(np.mean(sats)) if sats else None
         out.cells[k] = info
@@ -618,6 +664,8 @@ def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: fl
     hcents = {n: np.mean([units[i].hue for i in c], 0) for n, c in enumerate(big)
               if len(c) >= 2 and all(units[i].hue is not None for i in c)}
     scan.hcents = {letters[n]: hc for n, hc in hcents.items()}
+    vcents = {letters[n]: np.mean([units[i].vivid for i in c], 0) for n, c in enumerate(big)
+              if len(c) >= 2 and all(units[i].vivid is not None for i in c)}
     for v in scan.cells.values():
         if v.kind == "unit" and v.tier != "core" and not v.cursor and v.feat is not None and cents:
             d = [float(np.abs(cn - v.feat).sum()) for cn in cents]
@@ -632,11 +680,17 @@ def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: fl
                 # Farbton der ganzen Figur (Ruestung statt Visier) eindeutig naeher an einer Klasse.
                 # Als "geschaetzt" markiert -> erscheint im Overlay als "Unsicher".
                 v.cls, v.guessed = pick, True
-            elif v.sat is not None and sats:
+            elif (vpick := _vivid_pick(v.vivid, vcents)) is not None:
+                # Kraeftige Farben (Ruestung) eindeutig naeher an einer Klasse, als "geschaetzt".
+                v.cls, v.guessed = vpick, True
+            elif (spick := _sat_pick(v.sat, sats)) is not None:
                 # Ersatz: Saettigung (weiss/grau vs. blau/gold). Nur bei klarem Abstand, als "geschaetzt".
-                ds = sorted((abs(v.sat - cs), n) for n, cs in sats.items())
-                if len(ds) == 1 or ds[1][0] - ds[0][0] >= 0.08:
-                    v.cls, v.guessed = letters[ds[0][1]], True
+                v.cls, v.guessed = letters[spick], True
+            elif vcents and v.vivid is not None and v.vivid.any():
+                # Letzte Stufe (Nutzer, 2026-11-24): Eine Armee hat nur 3 Farben -> immer die aehnlichste
+                # nehmen statt "unbekannt". Sonst wird der Champion nie aktiviert. Als "geschaetzt".
+                v.cls = min(vcents, key=lambda c: float(np.abs(vcents[c] - v.vivid).sum()))
+                v.guessed = True
 
 
 def build_side(scan: SideScan, hero: Hero, who: str) -> Side:

@@ -38,3 +38,21 @@ def test_place_before_delete_gives_chain_move():
         s, _ = apply_action(s, a)
     variants = [acts for acts, _ in _reorder_variants(st, [Plan(delete_first, 0.0, s)], set())]
     assert place_first in variants
+
+
+def test_idle_champion_always_gets_nearest_color():
+    """Analyse 20261124_144125: goldener Greif blieb 'Farbe unbekannt' -> Aktivierung nie geplant.
+    Eine Armee hat nur 3 Farben: immer die aehnlichste nehmen (geschaetzt), hier Gold."""
+    f = ROOT / "dataset" / "analysis" / "20261124_144125.png"
+    if not f.exists():
+        pytest.skip("Aufnahme nicht vorhanden")
+    import numpy as np
+    from PIL import Image
+
+    from coh.vision import analyze
+
+    st, meta = analyze(np.asarray(Image.open(f).convert("RGB")), moves=3, cursor_col=1)
+    g = st.me.grid()
+    champ = g[(5, 1)]
+    assert champ.unit == "champion" and champ.color == g[(1, 3)].color  # goldener Speertraeger
+    assert (5, 1) in meta["guessed"]
