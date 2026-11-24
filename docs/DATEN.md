@@ -288,6 +288,12 @@ Laut offiziellen DE-Profilen (Steam, 2023) gegenüber BB (DS):
 - Reserve 0 -> 4: 1 für die gelöschte Einheit plus 1 je verschmolzenem Wandsegment (3).
 - Offen: Magie nur 1 % statt der geschätzten 12 % (2 Extrazüge à 6 %). Geben Wände keine Magie? ⚠️
 
+### Magie gemessen (2026-11-24, alle L1-Analysen bis 20261124_153431)
+- Aufeinanderfolgende Analysen im selben Zug, Plan bis zum Nachrufen gespielt: 1 Chain (Formation durch Löschen) **+3 bis +4 %**; Bewegen und Nachrufen ohne Chain **+0 %** (5 Fälle). -> `mp_per_extra_move: 0.035` (vorher 0.06).
+- Über den Rundenwechsel (17 Fälle, Ausgleichsrechnung, Rest ±3 %): **0,82** je ausgeteiltem und **1,55** je erhaltenem Schadenspunkt (vorher 1 und 2).
+- Fusion: nur ein Fall (mit Chain zusammen +4 %) -> klein, `mp_per_fusion: 0.01` ⚠️. Link-Partner und ungenutzte Züge noch ungeprüft ⚠️.
+- Wände durch Löschen: siehe oben (2 Extrazüge, nur +1 %) – möglicherweise geben Wände weniger als Angriffsformationen ⚠️.
+
 ## 7. Weiterhin offen ❌
 
 - Genaue DE-Zahlen (Atk/Toughness pro Level): am zuverlässigsten per OCR aus der Einheitenübersicht im Spiel
