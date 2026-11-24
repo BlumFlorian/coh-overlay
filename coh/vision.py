@@ -40,6 +40,7 @@ class CellInfo:
     wide: np.ndarray | None = None  # Pixel der ganzen Figur rechts von Herz/Zahl (fuer die Elite-Farbe)
     hue: np.ndarray | None = None  # Farbton-Histogramm der ganzen Figur ohne Bodenfarben
     vivid: np.ndarray | None = None  # nur kraeftige Farben (Ruestung statt Haut/Leder) + Weiss, siehe _vivid_hist
+    hfeat: np.ndarray | None = None  # Kopf/Helm-Merkmal ohne Cursor-Hintergrund (Farbe der Einheit unter dem Cursor)
 
 
 @dataclass
@@ -99,6 +100,13 @@ def _cyan(px):
 def _cursor_tint(px):
     r, g, b = px[..., 0], px[..., 1], px[..., 2]
     return (g > r + 30) & (b > r + 20) & (r < 140)
+
+
+def _cursor_bg(px):
+    """Nur der helle Cyan-Hintergrund des Cursors (~RGB 62/200/222 bis 63/228/249), nicht die
+    dunklere tuerkise Ruestung der Bogenschuetzen (die _cursor_tint mit erfasst)."""
+    r, g, b = px[..., 0].astype(int), px[..., 1].astype(int), px[..., 2].astype(int)
+    return (g > 170) & (b > 190) & (r < 130) & (b > r + 90)
 
 
 def _bar_mask(px):
@@ -588,6 +596,16 @@ def scan_side(img: np.ndarray, geo: Geometry, who: str, cursor_col: int | None =
         if v.kind == "unit":
             v.feat = v.afeat
             v.sat = _saturation(torsos[k])
+            if v.tier == "core":
+                # Kopf/Helm (oben in der Zelle): Unter dem Cursor verdeckt die grosse Vorschau-Ziffer
+                # den Rumpf, der Kopf bleibt frei und traegt die Farbe (Helm). Ohne den hell-cyanen
+                # Cursor-Hintergrund. Pruefung an 52 Cursor-Faellen mit derselben Einheit ohne
+                # Cursor in einer Nachbaraufnahme: Kopf 43 richtig, Rumpf 31 (Grundrauschen ~90 %).
+                x0, y0, x1, y1 = geo.cell_box(who, *k)
+                hp = _rgb(img, x0 + 0.30 * (x1 - x0), y0, x0 + 0.80 * (x1 - x0), y0 + 0.24 * (y1 - y0)).reshape(-1, 3)
+                hp = hp[~_cursor_bg(hp)]
+                if len(hp) >= 20:
+                    v.hfeat = _features(hp.reshape(1, -1, 3), bg)
             if v.tier != "core":  # Elite/Champion: Rumpf ueber beide Zellen (Bildschirm abwaerts)
                 below = scan.cells.get((k[0], k[1] + (1 if who == "me" else -1)))
                 if below is not None and below.torso is not None:
@@ -623,6 +641,9 @@ def merge_scans(scans: list[SideScan]) -> SideScan:
         info.hue = np.mean(hues, 0) if hues else None
         vivids = [v.vivid for v in sel if v.vivid is not None]
         info.vivid = np.mean(vivids, 0) if vivids else None
+        for name in ("hfeat",):  # Kopf/Helm (Einheit unter dem Cursor)
+            vals = [getattr(v, name) for v in sel if getattr(v, name) is not None]
+            setattr(info, name, np.mean(vals, 0) if vals else None)
         sats = [v.sat for v in sel if v.sat is not None]
         info.sat = float(np.mean(sats)) if sats else None
         out.cells[k] = info
@@ -688,6 +709,7 @@ def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: fl
             units[i].cls = letters[n]
     # Elite/Champion: Farbe = naechste Core-Klasse (grob; ihr Sprite unterscheidet sich vom Core)
     cents = [F[c].mean(0) for c in big]
+    _classify_cursor_unit(scan, units, big, cents, letters)
     sats = {}
     for n, c in enumerate(big):
         vals = [units[i].sat for i in c if units[i].sat is not None]
@@ -724,6 +746,23 @@ def classify(scan: SideScan, link: float = 0.62, attach: float = 0.62, keep3: fl
                 # nehmen statt "unbekannt". Sonst wird der Champion nie aktiviert. Als "geschaetzt".
                 v.cls = min(vcents, key=lambda c: float(np.abs(vcents[c] - v.vivid).sum()))
                 v.guessed = True
+
+
+def _classify_cursor_unit(scan: SideScan, units: list, big: list, cents: list, letters: str) -> None:
+    """Einheit unter dem Cursor: der Klasse (>= 2 Einheiten) mit dem aehnlichsten Kopf/Helm zuordnen.
+    Vorher war sie 'Farbe unbekannt' und passte zu nichts -> je nach Cursor-Position andere
+    Vorschlaege (Nutzer, 2026-11-24)."""
+    hc = {}
+    for n, c in enumerate(big):
+        hs = [units[i].hfeat for i in c if units[i].hfeat is not None]
+        if len(hs) >= 2:
+            hc[n] = np.mean(hs, 0)
+    if not hc:
+        return
+    for v in scan.cells.values():
+        if v.kind != "unit" or not v.cursor or v.tier != "core" or v.cls or v.hfeat is None:
+            continue
+        v.cls = letters[min(hc, key=lambda n: float(np.abs(hc[n] - v.hfeat).sum()))]
 
 
 def build_side(scan: SideScan, hero: Hero, who: str) -> Side:

@@ -37,6 +37,15 @@ def _green(a):
     return (g > 140) & (g > r + 50) & (g > b + 50)
 
 
+def _hp_bar(a):
+    """Lebensbalken in jeder Fuellfarbe: gruen (viel HP), orange (mittel), rot (wenig).
+    Analyse 20261124_152341: roter Balken bei 18 HP nicht erkannt -> Gegner-HP 100 angenommen."""
+    a = a.astype(int)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx = np.maximum(r, g)
+    return _green(a) | ((mx > 130) & (b < 60) & (mx - b > 90) & (r > g + 40) & (np.abs(r - g) > 40))         | ((r > 150) & (g > 90) & (g < r - 30) & (b < 50))
+
+
 # Zauberleiste: Feld am Portraet, fuellt sich von unten (ich: cyan, Gegner: rot)
 MP_ME = (305, 872, 385, 944)
 MP_EN = (1535, 140, 1610, 208)
@@ -62,20 +71,35 @@ def read_mp(img, geo) -> tuple[float, float]:
     return round(me, 2), round(en, 2)
 
 
+def _run(on: np.ndarray, from_right: bool, gap: int = 3):
+    """Ende des zusammenhaengenden Balkens: von der vollen Seite aus bis zur ersten Luecke > gap.
+    So zaehlen Verzierungen neben dem leeren Teil des Balkens nicht mit."""
+    idx = np.flatnonzero(on)
+    if not len(idx):
+        return None
+    seq = idx[::-1] if from_right else idx
+    end = seq[0]
+    for i in seq[1:]:
+        if abs(int(i) - int(end)) > gap + 1:
+            break
+        end = i
+    return int(end)
+
+
 def read_hp(img, geo) -> tuple[int | None, int | None]:
     sx, sy = geo.sx, geo.sy
     x0, x1, y0, y1 = HP_EN
-    m = _green(img[int(y0 * sy):int(y1 * sy), int((x0 - 20) * sx):int((x1 + 5) * sx)])
-    cols = np.flatnonzero(m.sum(0) >= 3)
+    m = _hp_bar(img[int(y0 * sy):int(y1 * sy), int((x0 - 20) * sx):int((x1 + 5) * sx)])
+    cols = _run(m.sum(0) >= 3, from_right=True)  # Gegnerbalken fuellt von rechts
     en = None
-    if len(cols):
-        left = (x0 - 20) * sx + cols.min()
+    if cols is not None:
+        left = (x0 - 20) * sx + cols
         en = int(round(100 * (x1 * sx - left) / ((x1 - x0) * sx)))
     x0, x1, y0, y1 = HP_ME
-    m = _green(img[int(y0 * sy):int(y1 * sy), int(LEGEND_RIGHT * sx):int((x1 + 20) * sx)])
-    cols = np.flatnonzero(m.sum(0) >= 3)
-    if len(cols):
-        right = LEGEND_RIGHT * sx + cols.max()
+    m = _hp_bar(img[int(y0 * sy):int(y1 * sy), int(LEGEND_RIGHT * sx):int((x1 + 20) * sx)])
+    cols = _run(m.sum(0) >= 3, from_right=False)  # mein Balken fuellt von links
+    if cols is not None:
+        right = LEGEND_RIGHT * sx + cols
         me = int(round(100 * (right - x0 * sx) / ((x1 - x0) * sx)))
     else:
         me = 40  # Balkenende hinter der Legende -> hoechstens ~46

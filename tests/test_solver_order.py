@@ -77,3 +77,32 @@ def test_split_blue_archers_and_bar_digit_in_charging_griffin():
     griffin = g[(5, 1)]
     assert griffin.kind == "form" and griffin.w == 2 and griffin.ct == 4
     assert not any(p.kind in ("wall", "block") and p.row > 0 for p in st.me.pieces)
+
+
+@pytest.mark.parametrize("stem, enemy_hp", [("20261124_152341", 18), ("20261113_014323", 45), ("20261113_011301", 77),
+                                             ("20261113_011834", 59), ("20261123_001349", 88)])
+def test_enemy_hp_bar_any_color(stem, enemy_hp):
+    """Lebensbalken wird bei wenig HP orange/rot; vorher nur Gruen gelesen -> 'Gegner 100' bei 18 HP."""
+    f = ROOT / "dataset" / "analysis" / f"{stem}.png"
+    if not f.exists():
+        pytest.skip("Aufnahme nicht vorhanden")
+    import numpy as np
+    from PIL import Image
+
+    from coh.ui import read_hp
+    from coh.vision import Geometry
+    assert read_hp(np.asarray(Image.open(f).convert("RGB")), Geometry(1920, 1080))[1] == enemy_hp
+
+
+def test_unit_under_cursor_gets_color_from_head():
+    """Analyse 20261124_152341: goldener Speertraeger unter dem Cursor (Sp. 6, R. 4) war 'unbekannt'."""
+    f = ROOT / "dataset" / "analysis" / "20261124_152341.png"
+    if not f.exists():
+        pytest.skip("Aufnahme nicht vorhanden")
+    import numpy as np
+    from PIL import Image
+
+    from coh.vision import analyze
+    st, _ = analyze(np.asarray(Image.open(f).convert("RGB")), moves=3, cursor_col=5)
+    g = st.me.grid()
+    assert g[(5, 3)].color == g[(2, 0)].color  # beide goldene Speertraeger
