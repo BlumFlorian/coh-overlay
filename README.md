@@ -34,13 +34,13 @@ py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Then start by double-clicking **`Overlay starten.bat`** (move suggestions) or **`Replay auswerten.bat`** (prediction vs. reality report).
+Then start by double-clicking **`CoH-Berater starten.bat`** (the only starter).
 
 Run the game **borderless** on your main monitor.
 
 ## 0. Client window (recommended)
 
-Double-click **`Client starten.bat`**: a window for your second monitor that also starts the overlay.
+**`CoH-Berater starten.bat`** opens a window for your second monitor and also starts the overlay.
 It shows the recognized board next to the screenshot (what the suggestion is based on), head values,
 plan, history and log. Name the colors once in the legend (letters are arbitrary per analysis); the
 client then assigns them itself. **"✎ Brett falsch melden"** corrects cells and values,
@@ -74,7 +74,7 @@ Requirements and data format: `docs/CLIENT.md` (German).
 
 ## 2. Replay report (prediction vs. reality)
 
-Double-click `Replay auswerten.bat` or:
+In the client: **"🔁 Replay"**, or:
 
 ```powershell
 .venv\Scripts\python tools\replay.py                 # all recordings in dataset\analysis

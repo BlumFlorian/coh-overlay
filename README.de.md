@@ -34,15 +34,16 @@ py -3.12 -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-Danach per Doppelklick starten: **`Overlay starten.bat`** (Zugvorschläge) bzw. **`Replay auswerten.bat`** (Vorhersage gegen Wirklichkeit).
+Danach per Doppelklick starten: **`CoH-Berater starten.bat`** (einzige Startdatei).
 
-**Empfohlen: `Client starten.bat`** – Programmfenster (für den zweiten Monitor), das das Overlay gleich mitstartet:
+Es öffnet das Programmfenster (für den zweiten Monitor) und startet das Overlay gleich mit:
 - **Brett-Ansicht** der neuesten Analyse neben dem Screenshot: Darauf beruht der Vorschlag. Kopfwerte, Plan und Unsicherheiten rechts, Verlauf links, Log unten.
 - **Farben:** Die Erkennung benennt Farben mit Buchstaben (je Analyse beliebig). Einmal in der Legende benennen (z. B. A = Gold), danach ordnet der Client sie selbst zu (gelernte Vorlage) – Korrekturen verfeinern sie.
 - **„✎ Brett falsch melden“:** Felder anklicken und richtigstellen, Kopfwerte ändern, Speichern. **„👎 Vorschlag schlecht“:** besseren Zug und Notiz eingeben.
 - Meldungen landen in `dataset/corrections/<Zeit>/` (Screenshot, `erkannt.json`, `korrigiert.json` bzw. `zug.json`, `notiz.txt`).
 - **„📊 Training“:** alle Korrekturen gegen die aktuelle Erkennung – Trefferquote je Merkmal und Liste der Abweichungen. **„⚙ Einstellungen“:** Zauber, Rechenbudget, Vorausschau, Halte-Dauer.
-- Anforderungen und Datenformat: `docs/CLIENT.md`. Nicht zusätzlich `Overlay starten.bat` öffnen (sonst laufen zwei Overlays).
+- **„🔁 Replay“:** Vorhersagen der Analysen gegen das, was danach passiert ist (Bericht öffnet sich).
+- Anforderungen und Datenformat: `docs/CLIENT.md`. Ohne Fenster geht weiterhin `.venv\Scripts\python tools\overlay.py`.
 
 ## 1. Daten sammeln (L1-Modus)
 
@@ -91,7 +92,7 @@ Vorgeschlagen werden nur Züge mit Grundeinheiten (Bewegen, Löschen mit Chain, 
 
 ## 2b. Replay-Auswertung (Vorhersage gegen Wirklichkeit)
 
-Doppelklick auf `Replay auswerten.bat` oder:
+Im Client „🔁 Replay“ oder:
 
 ```powershell
 .venv\Scripts\python tools\replay.py                 # alle Aufnahmen in dataset\analysis

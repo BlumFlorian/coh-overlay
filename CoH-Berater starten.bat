@@ -1,6 +1,6 @@
 @echo off
-rem Startet den CoH-Berater-Client (Fenster mit Brett-Ansicht, Korrekturen, Overlay-Steuerung).
-rem Das Overlay wird im Client ueber "Overlay starten" gestartet (nicht zusaetzlich die andere .bat).
+rem Startet den CoH-Berater: Fenster mit Brett-Ansicht, Korrekturen, Training - und das Overlay.
+rem Einzige Startdatei. Das Overlay laesst sich im Fenster stoppen und wieder starten.
 setlocal
 cd /d "%~dp0"
 

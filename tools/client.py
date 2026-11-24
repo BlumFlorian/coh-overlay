@@ -151,6 +151,18 @@ def load_record(stem: str) -> dict:
 
 # --------------------------------------------------------------------------- Overlay-Prozess
 
+def no_console(proc: QProcess) -> None:
+    """Unterprozess ohne eigenes Konsolenfenster (Ausgabe kommt ins Log des Clients)."""
+    if os.name != "nt":
+        return
+    try:
+        def _flags(args):
+            args.flags |= 0x08000000  # CREATE_NO_WINDOW
+        proc.setCreateProcessArgumentsModifier(_flags)
+    except AttributeError:
+        pass
+
+
 class OverlayProcess(QObject):
     line = Signal(str)
     running = Signal(bool)
@@ -164,13 +176,7 @@ class OverlayProcess(QObject):
         self.proc.started.connect(lambda: self.running.emit(True))
         self.proc.finished.connect(lambda *_: self.running.emit(False))
         self._buf = ""
-        if os.name == "nt":  # kein eigenes Konsolenfenster fuer das Overlay (Ausgabe kommt ins Log)
-            try:
-                def _no_window(args):
-                    args.flags |= 0x08000000  # CREATE_NO_WINDOW
-                self.proc.setCreateProcessArgumentsModifier(_no_window)
-            except AttributeError:
-                pass
+        no_console(self.proc)
 
     def is_running(self) -> bool:
         return self.proc.state() != QProcess.NotRunning
@@ -699,6 +705,10 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         act_train = QAction("📊 Training", self)
         act_train.triggered.connect(lambda: TrainingDialog(self).exec())
+        act_replay = QAction("🔁 Replay", self)
+        act_replay.setToolTip("Vorhersagen der gespeicherten Analysen gegen das, was danach passiert ist (Bericht)")
+        act_replay.triggered.connect(self.run_replay)
+        tb.addAction(act_replay)
         act_set = QAction("⚙ Einstellungen", self)
         act_set.triggered.connect(self.open_settings)
         act_folder = QAction("📁 Meldungen", self)
@@ -1088,6 +1098,28 @@ class MainWindow(QMainWindow):
         self.act_stop.setEnabled(on)
         if not on:
             self.status.setText("Overlay aus")
+
+    def run_replay(self):
+        if getattr(self, "replay", None) is not None and self.replay.state() != QProcess.NotRunning:
+            return
+        self.replay = QProcess(self)
+        self.replay.setWorkingDirectory(str(ROOT))
+        self.replay.setProcessChannelMode(QProcess.MergedChannels)
+        no_console(self.replay)
+        self.replay.readyReadStandardOutput.connect(
+            lambda: [self.log.appendPlainText(ln) for ln in
+                     bytes(self.replay.readAllStandardOutput()).decode("utf-8", "replace").splitlines()])
+        self.replay.finished.connect(self.replay_done)
+        self.on_log("> Replay-Auswertung laeuft ...")
+        self.replay.start(str(PY if PY.exists() else sys.executable), ["-u", str(ROOT / "tools" / "replay.py")])
+
+    def replay_done(self, code, _status=None):
+        reports = sorted((ROOT / "dataset" / "replay").glob("bericht_*.md"))
+        if code == 0 and reports:
+            self.on_log(f"> Replay fertig: {reports[-1]}")
+            os.startfile(str(reports[-1]))
+        else:
+            self.on_log(f"> Replay fehlgeschlagen (Code {code}), siehe Log")
 
     def open_settings(self):
         dlg = SettingsDialog(self, self.settings)

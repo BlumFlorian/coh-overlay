@@ -1,7 +1,7 @@
 # Client – Anforderungen (Stand 2026-11-24)
 
 **Umsetzung:** Stufe 1 (F1–F10) und Stufe 2 (F11–F12) umgesetzt in `tools/client.py`, Datenformat `coh/boardio.py`,
-Auswertung `coh/training.py`, Start `Client starten.bat`. Stufe 3 (F13–F14) offen.
+Auswertung `coh/training.py`, Start `CoH-Berater starten.bat` (einzige Startdatei, startet das Overlay mit). Stufe 3 (F13–F14) offen.
 Farben: zusätzlich gelernte Farb-Vorlagen (`dataset/client_state.json`), damit die Legende nur einmal benannt werden muss.
 
 Ziel: Das Overlay bekommt ein richtiges Programmfenster (statt Konsole). Es zeigt, **auf welchem
@@ -21,7 +21,7 @@ landen als maschinenlesbare Daten in einem Ordner und dienen als Grundlage für 
 ### Muss
 | Nr | Anforderung |
 |----|-------------|
-| F1 | **Start per Doppelklick** (`Client starten.bat`). Der Client startet und stoppt das Overlay, zeigt den Status (Spielfenster, Controller, bereit / analysiert / Vorschlag in X s) und das Log (ausklappbar). |
+| F1 | **Start per Doppelklick** (`CoH-Berater starten.bat`). Der Client startet und stoppt das Overlay, zeigt den Status (Spielfenster, Controller, bereit / analysiert / Vorschlag in X s) und das Log (ausklappbar). |
 | F2 | **Brett-Ansicht** der neuesten Analyse, live aktualisiert: beide Seiten als 8×6-Raster mit Typ, Farbe, Stärke, Ladezeit, Wand-HP; mehrfeldrige Pieces (Elite 1×2, Champion 2×2, Formationen) als ein Block. Unsichere Felder markiert. |
 | F3 | **Screenshot daneben** (zoombar), Raster darübergelegt umschaltbar – zum direkten Vergleich. |
 | F4 | **Kopfwerte:** Züge, Reserve, HP beider Seiten, Magie beider Seiten, Kontingent – alle korrigierbar. |
