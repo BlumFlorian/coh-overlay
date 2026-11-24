@@ -53,7 +53,7 @@ Run the game **borderless** on your main monitor.
 - **Using all moves:** chains can give back many moves; the search plays promising plans to the end, so no moves are wasted.
 - **Reinforcements:** calling reinforcements *first* is rated as well (averaged over several random drops, including possible elites/champions). Afterwards, open the stats grid again for a new suggestion.
 - **Linked attacks:** forming a core attack that fires *before* a charging elite/champion of the same colour is penalised, because those units could link with it later.
-- **Holy Shield (Godric):** only simulated if you play Godric: start with `--spell holy_shield` (off by default). With a full bar, casting is a free action. A full bar kept for later has its own value; casting must beat it.
+- **Holy Shield (Godric):** with a full bar, casting is a free action. A full bar kept for later has its own value; casting must beat it. `--spell ""` disables it.
 - Elites and champions are never suggested for deletion.
 - Results are deterministic: the same board gives the same suggestion (fixed seeds, fixed search budget `--nodes`, averaged over `--frames` screenshots).
 - Every analysis is saved to `dataset\analysis\` (screenshot, debug image with recognised classes, suggestion).

@@ -519,10 +519,8 @@ def main():
     ap.add_argument("--beam", type=int, default=60)
     ap.add_argument("--lookahead", type=int, default=8,
                     help="So viele Kandidaten inkl. eigenem Folgezug bewerten (0 = aus, schneller)")
-    ap.add_argument("--spell", default="",
-                    help="Simulierter Heldenzauber: holy_shield = Godric; leer (Standard) = keinen einplanen. "
-                         "Nur setzen, wenn du diesen Helden spielst (2026-11-24: Holy Shield wurde fuer einen "
-                         "anderen Helden geplant)")
+    ap.add_argument("--spell", default="holy_shield",
+                    help="Simulierter Heldenzauber (holy_shield = Godric; leer = keinen einplanen)")
     ap.add_argument("--hold", type=float, default=0.5, help="Sekunden L1 halten bis zur Analyse")
     ap.add_argument("--image", type=Path, help="Test: Screenshot statt Live-Bild analysieren")
     ap.add_argument("--snap", type=Path, help="Test: nach 3 s Bildschirmfoto speichern und beenden")
