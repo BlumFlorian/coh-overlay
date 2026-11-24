@@ -107,7 +107,9 @@ class Hero:
     shield: int = -1  # Holy Shield: verbleibende Schild-HP; -1 = kein Schild aktiv
 
     def spell_ready(self) -> bool:
-        return self.spell is not None and self.shield < 0 and self.mp >= 0.97 * self.max_mp
+        # Erst bei voller Leiste (Ablese-Toleranz wird beim Uebernehmen der UI-Werte angewendet).
+        # Vorher 97 %: 93 % + Chain-Magie (Schaetzwert) galt als bereit (Analyse 20261124_153431).
+        return self.spell is not None and self.shield < 0 and self.mp >= self.max_mp
 
 
 @dataclass

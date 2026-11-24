@@ -67,7 +67,16 @@ def read_mp(img, geo) -> tuple[float, float]:
         return 0.0
     # ich: cyan (unter der halbdurchsichtigen L1-Legende nur noch leicht gruenlich)
     me = fill(MP_ME, lambda a: (a[..., 1] - a[..., 0] > 15) & (a[..., 1] > 120))
-    en = fill(MP_EN, lambda a: (a[..., 0] - a[..., 1] > 80) & (a[..., 0] > 150))
+    red = lambda a: (a[..., 0] - a[..., 1] > 80) & (a[..., 0] > 150)  # noqa: E731
+    en = fill(MP_EN, red)
+    if en < 0.5:
+        # Bereit-Symbol als Farbverlauf: oben hellrot, unten dunkel -> die Fuellung von unten findet
+        # nichts (Analyse 20261124_153431: Gegner bereit, gelesen 0 %). Teilfuellungen sind unten
+        # gefuellt und oben nie rot.
+        x0, y0, x1, y1 = MP_EN
+        top = img[int(y0 * geo.sy):int((y0 + 12) * geo.sy), int(x0 * geo.sx):int(x1 * geo.sx), :3].astype(int)
+        if red(top).mean() >= 0.6:
+            en = 1.0
     return round(me, 2), round(en, 2)
 
 

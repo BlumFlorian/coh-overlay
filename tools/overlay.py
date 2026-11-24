@@ -422,7 +422,8 @@ def compute(frames, args):
         state.enemy.hero.hp = ui.enemy_hp
     state.me.hero.spell = args.spell or None
     if ui.my_mp is not None:
-        state.me.hero.mp = round(ui.my_mp * state.me.hero.max_mp)
+        # Ab 97 % gelesen = voll (Ablese-Toleranz); in der Simulation zaehlt nur die volle Leiste.
+        state.me.hero.mp = state.me.hero.max_mp if ui.my_mp >= 0.97 else round(ui.my_mp * state.me.hero.max_mp)
     if ui.enemy_mp is not None:
         state.enemy.hero.mp = round(ui.enemy_mp * state.enemy.hero.max_mp)
     plans = solve(state, node_budget=args.nodes, beam=args.beam, top=2, lookahead=args.lookahead,
@@ -518,8 +519,10 @@ def main():
     ap.add_argument("--beam", type=int, default=60)
     ap.add_argument("--lookahead", type=int, default=8,
                     help="So viele Kandidaten inkl. eigenem Folgezug bewerten (0 = aus, schneller)")
-    ap.add_argument("--spell", default="holy_shield",
-                    help="Simulierter Heldenzauber (holy_shield = Godric; leer = keinen einplanen)")
+    ap.add_argument("--spell", default="",
+                    help="Simulierter Heldenzauber: holy_shield = Godric; leer (Standard) = keinen einplanen. "
+                         "Nur setzen, wenn du diesen Helden spielst (2026-11-24: Holy Shield wurde fuer einen "
+                         "anderen Helden geplant)")
     ap.add_argument("--hold", type=float, default=0.5, help="Sekunden L1 halten bis zur Analyse")
     ap.add_argument("--image", type=Path, help="Test: Screenshot statt Live-Bild analysieren")
     ap.add_argument("--snap", type=Path, help="Test: nach 3 s Bildschirmfoto speichern und beenden")
